@@ -1,0 +1,11 @@
+prefix=/home/sarathnadendla/Desktop/AgenticAI Code/travel_itinerary_app/travelenv
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+toolexeclibdir=${libdir}
+includedir=/home/sarathnadendla/Desktop/AgenticAI Code/travel_itinerary_app/travelenv/include
+
+Name: libffi
+Description: Library supporting Foreign Function Interfaces
+Version: 3.4.4
+Libs: -L${toolexeclibdir} -lffi
+Cflags: -I${includedir}

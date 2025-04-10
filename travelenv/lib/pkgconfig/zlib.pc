@@ -1,0 +1,13 @@
+prefix=/home/sarathnadendla/Desktop/AgenticAI Code/travel_itinerary_app/travelenv
+exec_prefix=/home/sarathnadendla/Desktop/AgenticAI Code/travel_itinerary_app/travelenv
+libdir=/home/sarathnadendla/Desktop/AgenticAI Code/travel_itinerary_app/travelenv/lib
+sharedlibdir=/home/sarathnadendla/Desktop/AgenticAI Code/travel_itinerary_app/travelenv/lib
+includedir=/home/sarathnadendla/Desktop/AgenticAI Code/travel_itinerary_app/travelenv/include
+
+Name: zlib
+Description: zlib compression library
+Version: 1.2.13
+
+Requires:
+Libs: -L${libdir} -L${sharedlibdir} -lz
+Cflags: -I${includedir}

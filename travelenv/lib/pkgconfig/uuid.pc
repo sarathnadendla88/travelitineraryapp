@@ -1,0 +1,11 @@
+prefix=/home/sarathnadendla/Desktop/AgenticAI Code/travel_itinerary_app/travelenv
+exec_prefix=/home/sarathnadendla/Desktop/AgenticAI Code/travel_itinerary_app/travelenv
+libdir=/home/sarathnadendla/Desktop/AgenticAI Code/travel_itinerary_app/travelenv/lib
+includedir=/home/sarathnadendla/Desktop/AgenticAI Code/travel_itinerary_app/travelenv/include
+
+Name: uuid
+Description: Universally unique id library
+Version: 2.32.1
+Requires:
+Cflags: -I${includedir}/uuid
+Libs: -L${libdir} -luuid
