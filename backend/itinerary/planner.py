@@ -45,17 +45,45 @@ def create_langgraph_agent():
         except Exception as e:
             return {"error": str(e)}
 
-    # Create a more robust version of the search tool with retry logic
+    # Tavily search tool
     @tool
-    def robust_travel_search(query: str):
-        """Use Serper to search for real-time travel information with accurate flight and cost details. Includes retry logic."""
+    def tavily_search(query: str):
+        """Use Tavily to search for travel information with accurate details about flights, hotels, and destinations."""
+        try:
+            from tavily import TavilyClient
+            client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+            result = client.search(query=query, search_depth="advanced", include_domains=["booking.com", "expedia.com", "tripadvisor.com", "kayak.com", "hotels.com", "airbnb.com", "skyscanner.com", "makemytrip.com", "cleartrip.com", "yatra.com", "goibibo.com", "irctc.co.in", "redbus.in"])
+            return result
+        except Exception as e:
+            print(f"Tavily search error: {str(e)}")
+            return {"error": str(e)}
+
+    # DuckDuckGo search tool
+    @tool
+    def duckduckgo_search(query: str):
+        """Use DuckDuckGo to search for travel information with accurate details about flights, hotels, and destinations."""
+        try:
+            from duckduckgo_search import DDGS
+            ddgs = DDGS()
+            results = list(ddgs.text(query, max_results=10))
+            return {"results": results}
+        except Exception as e:
+            print(f"DuckDuckGo search error: {str(e)}")
+            return {"error": str(e)}
+
+    # Create a more robust version of the search tool with retry logic and multiple search engines
+    @tool
+    def multi_search(query: str):
+        """Use multiple search engines (Serper, Tavily, DuckDuckGo) to find accurate travel information. This tool combines results from different sources for better accuracy."""
         import requests
         import json
         import time
 
         max_retries = 3
         retry_delay = 2  # seconds
+        results = {}
 
+        # Try Serper first
         for attempt in range(max_retries):
             try:
                 url = "https://google.serper.dev/search"
@@ -71,34 +99,52 @@ def create_langgraph_agent():
                 }
 
                 response = requests.request("POST", url, headers=headers, data=payload)
-                result = response.json()
+                serper_result = response.json()
 
                 # Check if the result contains meaningful data
-                if result and 'organic' in result and len(result['organic']) > 0:
-                    print(f"Search successful on attempt {attempt + 1}")
-                    return result
+                if serper_result and 'organic' in serper_result and len(serper_result['organic']) > 0:
+                    print(f"Serper search successful on attempt {attempt + 1}")
+                    results["serper"] = serper_result
+                    break
                 else:
-                    print(f"Search returned empty results on attempt {attempt + 1}, retrying...")
+                    print(f"Serper search returned empty results on attempt {attempt + 1}, retrying...")
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
                     else:
-                        return {"error": "No meaningful results found after multiple attempts", "partial_results": result}
+                        results["serper"] = {"error": "No meaningful results found after multiple attempts"}
             except Exception as e:
-                print(f"Search error on attempt {attempt + 1}: {str(e)}")
+                print(f"Serper search error on attempt {attempt + 1}: {str(e)}")
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                 else:
-                    return {"error": f"Failed after {max_retries} attempts: {str(e)}"}
+                    results["serper"] = {"error": f"Failed after {max_retries} attempts: {str(e)}"}
 
-    tool_node = ToolNode([robust_travel_search])
-    model_with_tools = model.bind_tools([robust_travel_search])
+        # Try Tavily
+        try:
+            tavily_result = tavily_search(query)
+            results["tavily"] = tavily_result
+        except Exception as e:
+            results["tavily"] = {"error": str(e)}
+
+        # Try DuckDuckGo
+        try:
+            duckduckgo_result = duckduckgo_search(query)
+            results["duckduckgo"] = duckduckgo_result
+        except Exception as e:
+            results["duckduckgo"] = {"error": str(e)}
+
+        return results
+
+    # Create a tool node with all search tools
+    tool_node = ToolNode([travel_serper_search, tavily_search, duckduckgo_search, multi_search])
+    model_with_tools = model.bind_tools([travel_serper_search, tavily_search, duckduckgo_search, multi_search])
 
     def call_model(state: State):
         return {
             "messages": [
                 model_with_tools.invoke([
                     SystemMessage(content=(
-                        "You are a professional travel itinerary planner assistant with expertise in providing accurate flight and cost information. "
+                        "You are a professional travel itinerary planner assistant with expertise in providing accurate flight and cost information. You have access to multiple search tools (Serper, Tavily, DuckDuckGo) that you should use to find the most accurate and up-to-date travel information. Use these tools to cross-verify information from multiple sources for better accuracy. "
                         "Your task is to return a well-structured JSON object based on user trip details. "
                         "Always respond ONLY with JSON. DO NOT include any explanation or apologies.\n\n"
                         "Use the following strict format:\n\n"
@@ -187,7 +233,10 @@ def create_langgraph_agent():
                         "  }\n"
                         "}\n\n"
                         "Requirements:\n"
-                        "- Use the search tool to find accurate and up-to-date flight prices, schedules, and availability.\n"
+                        "- Use multiple search tools (travel_serper_search, tavily_search, duckduckgo_search, or multi_search) to find and cross-verify accurate and up-to-date flight prices, schedules, and availability.\n"
+                        "- When searching for flight information, use specific queries like 'flights from [origin] to [destination] on [date]' to get accurate results.\n"
+                        "- When searching for hotel information, use specific queries like 'hotels in [destination] with prices' to get accurate results.\n"
+                        "- Use the multi_search tool for important information that requires verification from multiple sources.\n"
                         "- Include at least 8 diverse and realistic flight options (varied airlines, times, prices).\n"
                         "- For flights, always include detailed layover information in the layover_details array with city name, duration, arrival time at the layover city, departure time of the next flight, and whether a terminal change is required.\n"
                         "- If it's a direct flight, provide an empty array for layover_details.\n"

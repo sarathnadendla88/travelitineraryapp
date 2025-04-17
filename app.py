@@ -67,25 +67,38 @@ def display_trip_info(origin, destination, start_date, end_date, people, trip_ty
 
 # Display trip summary with cheapest flight and hotel prices
 def display_trip_summary(itinerary_data):
-    st.subheader("Trip Overview")
-
-    # Create a container with a light background
+    # Create a container with a light background and compact design
     with st.container():
         st.markdown("""
         <style>
         .summary-box {
             background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            border-left: 5px solid #4CAF50;
+            padding: 8px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border-left: 3px solid #4CAF50;
+            font-size: 0.9em;
+        }
+        .summary-title {
+            font-size: 0.85em;
+            font-weight: bold;
+            margin-bottom: 3px;
+            color: #555;
+        }
+        .price-highlight {
+            color: #2E7D32;
+            font-weight: bold;
+        }
+        .total-price {
+            color: #1565C0;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        .summary-item {
+            margin-bottom: 2px;
         }
         </style>
         """, unsafe_allow_html=True)
-
-        st.markdown('<div class="summary-box">', unsafe_allow_html=True)
-
-        col1, col2, col3 = st.columns(3)
 
         # Find cheapest flight
         cheapest_flight = None
@@ -127,95 +140,93 @@ def display_trip_summary(itinerary_data):
                     except:
                         pass
 
-        # Display cheapest flight information
-        with col1:
-            st.markdown("**✈️ Cheapest Flight**")
-            if cheapest_flight:
-                airline = cheapest_flight.get("airline", "Airline")
-                flight_number = cheapest_flight.get("flight_number", "")
-                departure_time = cheapest_flight.get("departure_time", "")
-                arrival_time = cheapest_flight.get("arrival_time", "")
-                price = cheapest_flight.get("price", "Price not available")
+        # Calculate total cost
+        total_cost = 0
+        currency_symbol = "$"  # Default
 
-                st.markdown(f"**{airline}** {flight_number}")
-                st.markdown(f"**Time:** {departure_time} - {arrival_time}")
-                st.markdown(f"**Price:** <span style='color:green; font-weight:bold'>{price}</span>", unsafe_allow_html=True)
-            else:
-                st.markdown("No flight information available")
+        # Add flight cost
+        flight_cost = 0
+        if cheapest_flight:
+            try:
+                price_value = ''.join(filter(lambda x: x.isdigit() or x == '.', str(cheapest_flight.get("price", "0"))))
+                if price_value:
+                    flight_cost = float(price_value)
+                    total_cost += flight_cost
 
-        # Display cheapest hotel information
-        with col2:
-            st.markdown("**🏨 Cheapest Hotel**")
-            if cheapest_hotel:
-                name = cheapest_hotel.get("name", "Hotel")
-                location = cheapest_hotel.get("location", "Location not available")
-                price = cheapest_hotel.get("price_per_night", "Price not available")
-
-                st.markdown(f"**{name}**")
-                st.markdown(f"**Location:** {location}")
-                st.markdown(f"**Price/Night:** <span style='color:green; font-weight:bold'>{price}</span>", unsafe_allow_html=True)
-            else:
-                st.markdown("No hotel information available")
-
-        # Display estimated total cost
-        with col3:
-            st.markdown("**💰 Estimated Cost**")
-
-            # Calculate total cost (very rough estimate)
-            total_cost = 0
-            cost_components = []
-
-            # Add flight cost
-            if cheapest_flight:
-                try:
-                    price_value = ''.join(filter(lambda x: x.isdigit() or x == '.', str(cheapest_flight.get("price", "0"))))
-                    if price_value:
-                        flight_cost = float(price_value)
-                        total_cost += flight_cost
-                        cost_components.append(f"Flight: {flight_cost:.2f}")
-                except:
-                    pass
-
-            # Add hotel cost (multiply by number of nights)
-            if cheapest_hotel:
-                try:
-                    price_value = ''.join(filter(lambda x: x.isdigit() or x == '.', str(cheapest_hotel.get("price_per_night", "0"))))
-                    if price_value:
-                        hotel_cost_per_night = float(price_value)
-                        # Get number of days from daily_plan
-                        num_days = len(itinerary_data.get("daily_plan", {}))
-                        if num_days == 0:
-                            num_days = 3  # Default if no daily plan
-                        hotel_total = hotel_cost_per_night * num_days
-                        total_cost += hotel_total
-                        cost_components.append(f"Hotel ({num_days} nights): {hotel_total:.2f}")
-                except:
-                    pass
-
-            # Display the total and breakdown
-            if total_cost > 0:
-                currency_symbol = "$"  # Default
-                # Try to detect currency from flight or hotel price
-                if cheapest_flight and isinstance(cheapest_flight.get("price", ""), str):
+                    # Try to detect currency
                     price_str = cheapest_flight.get("price", "")
-                    if "$" in price_str:
-                        currency_symbol = "$"
-                    elif "€" in price_str:
-                        currency_symbol = "€"
-                    elif "£" in price_str:
-                        currency_symbol = "£"
-                    elif "₹" in price_str:
-                        currency_symbol = "₹"
+                    if isinstance(price_str, str):
+                        if "$" in price_str:
+                            currency_symbol = "$"
+                        elif "€" in price_str:
+                            currency_symbol = "€"
+                        elif "£" in price_str:
+                            currency_symbol = "£"
+                        elif "₹" in price_str:
+                            currency_symbol = "₹"
+            except:
+                pass
 
-                st.markdown(f"**Total:** <span style='color:blue; font-size:18px; font-weight:bold'>{currency_symbol}{total_cost:.2f}</span>", unsafe_allow_html=True)
-                st.markdown("**Breakdown:**")
-                for component in cost_components:
-                    st.markdown(f"- {component}")
-                st.markdown("*Plus local expenses*")
-            else:
-                st.markdown("Cost information not available")
+        # Add hotel cost
+        hotel_cost = 0
+        num_days = len(itinerary_data.get("daily_plan", {}))
+        if num_days == 0:
+            num_days = 3  # Default if no daily plan
 
-        st.markdown('</div>', unsafe_allow_html=True)
+        if cheapest_hotel:
+            try:
+                price_value = ''.join(filter(lambda x: x.isdigit() or x == '.', str(cheapest_hotel.get("price_per_night", "0"))))
+                if price_value:
+                    hotel_cost_per_night = float(price_value)
+                    hotel_cost = hotel_cost_per_night * num_days
+                    total_cost += hotel_cost
+            except:
+                pass
+
+        # Create a compact summary box
+        html = '<div class="summary-box">'
+        html += '<div style="display: flex; justify-content: space-between; align-items: center;">'  # Flex container
+
+        # Left section - Flight
+        html += '<div style="flex: 1; padding-right: 10px;">'  # Flight section
+        html += '<div class="summary-title">✈️ CHEAPEST FLIGHT</div>'
+        if cheapest_flight:
+            airline = cheapest_flight.get("airline", "Airline")
+            flight_number = cheapest_flight.get("flight_number", "")
+            price = cheapest_flight.get("price", "Price not available")
+            html += f'<div class="summary-item">{airline} {flight_number}</div>'
+            html += f'<div class="summary-item price-highlight">{price}</div>'
+        else:
+            html += '<div class="summary-item">No flight info available</div>'
+        html += '</div>'  # End flight section
+
+        # Middle section - Hotel
+        html += '<div style="flex: 1; padding-right: 10px; border-left: 1px solid #ddd; padding-left: 10px;">'  # Hotel section
+        html += '<div class="summary-title">🏨 CHEAPEST HOTEL</div>'
+        if cheapest_hotel:
+            name = cheapest_hotel.get("name", "Hotel")
+            price = cheapest_hotel.get("price_per_night", "Price not available")
+            html += f'<div class="summary-item">{name}</div>'
+            html += f'<div class="summary-item price-highlight">{price}/night</div>'
+        else:
+            html += '<div class="summary-item">No hotel info available</div>'
+        html += '</div>'  # End hotel section
+
+        # Right section - Total Cost
+        html += '<div style="flex: 1; border-left: 1px solid #ddd; padding-left: 10px;">'  # Total cost section
+        html += '<div class="summary-title">💰 ESTIMATED COST</div>'
+        if total_cost > 0:
+            html += f'<div class="summary-item total-price">{currency_symbol}{total_cost:.2f}</div>'
+            html += f'<div class="summary-item" style="font-size: 0.8em;">Flight: {currency_symbol}{flight_cost:.2f}</div>'
+            html += f'<div class="summary-item" style="font-size: 0.8em;">Hotel ({num_days} nights): {currency_symbol}{hotel_cost:.2f}</div>'
+        else:
+            html += '<div class="summary-item">Cost info not available</div>'
+        html += '</div>'  # End total cost section
+
+        html += '</div>'  # End flex container
+        html += '</div>'  # End summary box
+
+        st.markdown(html, unsafe_allow_html=True)
 
 # Function to extract numeric value from price string
 def extract_price(price_str):
@@ -252,7 +263,7 @@ def display_flights(flights):
 
     # Display flights in a grid
     for i, flight in enumerate(sorted_flights):
-        with st.expander(f"{flight.get('airline', 'Airline')} - {flight.get('from', 'Origin')} to {flight.get('to', 'Destination')} - {flight.get('price', 'Price')}" + (" 🏆 Best Value!" if i == 0 else "")):
+        with st.expander(f"{flight.get('airline', 'Airline')} - {flight.get('from', 'Origin')} to {flight.get('to', 'Destination')} - {flight.get('price', 'Price')}" + (" 🏆 Best Value!" if i == 0 else ""), expanded=True):
             col1, col2 = st.columns([1, 3])
 
             with col1:
@@ -574,7 +585,7 @@ def display_trains(trains):
 
     # Display trains in a grid
     for i, train in enumerate(filtered_trains):
-        with st.expander(f"{train.get('train_name', 'Train')} ({train.get('train_number', '')}) - {train.get('departure_time', '')} to {train.get('arrival_time', '')} - {train.get('price', 'Price not available')}"):
+        with st.expander(f"{train.get('train_name', 'Train')} ({train.get('train_number', '')}) - {train.get('departure_time', '')} to {train.get('arrival_time', '')} - {train.get('price', 'Price not available')}", expanded=True):
             col1, col2 = st.columns([1, 3])
 
             with col1:
@@ -683,7 +694,7 @@ def display_buses(buses):
 
     # Display buses in a grid
     for i, bus in enumerate(filtered_buses):
-        with st.expander(f"{bus.get('operator', 'Bus Operator')} - {bus.get('departure_time', '')} to {bus.get('arrival_time', '')} - {bus.get('price', 'Price not available')}"):
+        with st.expander(f"{bus.get('operator', 'Bus Operator')} - {bus.get('departure_time', '')} to {bus.get('arrival_time', '')} - {bus.get('price', 'Price not available')}", expanded=True):
             col1, col2 = st.columns([1, 3])
 
             with col1:
@@ -894,7 +905,7 @@ def display_pilgrimages(pilgrimages):
 
     # Display pilgrimages in a grid
     for pilgrimage in sorted_pilgrimages:
-        with st.expander(f"{pilgrimage.get('name', 'Pilgrimage')} - {pilgrimage.get('date', 'Date not specified')}"):
+        with st.expander(f"{pilgrimage.get('name', 'Pilgrimage')} - {pilgrimage.get('date', 'Date not specified')}", expanded=True):
             col1, col2 = st.columns([1, 3])
 
             with col1:
@@ -954,7 +965,7 @@ def display_news(news):
 
     # Display news in a grid
     for news_item in sorted_news:
-        with st.expander(f"{news_item.get('title', 'News')} - {news_item.get('date', 'Date not specified')}"):
+        with st.expander(f"{news_item.get('title', 'News')} - {news_item.get('date', 'Date not specified')}", expanded=True):
             col1, col2 = st.columns([1, 3])
 
             with col1:
@@ -1009,7 +1020,7 @@ def display_event_cards(events):
 
     # Display events in a grid
     for i, event in enumerate(sorted_events):
-        with st.expander(f"{event.get('name', 'Event')} - {event.get('date', 'Date not specified')}"):
+        with st.expander(f"{event.get('name', 'Event')} - {event.get('date', 'Date not specified')}", expanded=True):
             col1, col2 = st.columns([1, 3])
 
             with col1:
