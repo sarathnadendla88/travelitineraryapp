@@ -1,7 +1,8 @@
 import streamlit as st
 import requests
 import json
-from datetime import date
+from datetime import date, timedelta, datetime
+import re
 
 # Set page configuration
 st.set_page_config(page_title="🌍 Travel Planner", layout="wide")
@@ -51,19 +52,7 @@ def fetch_itinerary_data(origin, destination, trip_type, num_days, people, start
         st.code(traceback.format_exc())
         return None
 
-# Display trip information
-def display_trip_info(origin, destination, start_date, end_date, people, trip_type):
-    st.header("Trip Information")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.info(f"**From:** {origin}")
-    with col2:
-        st.info(f"**To:** {destination}")
-
-    num_days = (end_date - start_date).days + 1
-    st.info(f"**Dates:** {start_date.strftime('%B %d, %Y')} - {end_date.strftime('%B %d, %Y')} ({num_days} days)")
-    st.info(f"**Travelers:** {people}")
-    st.info(f"**Trip Type:** {trip_type}")
+# Trip information display has been removed
 
 # Display trip summary with cheapest flight and hotel prices
 def display_trip_summary(itinerary_data):
@@ -246,6 +235,68 @@ def extract_price(price_str):
     # Convert to float, default to 0 if empty
     return float(cleaned_price) if cleaned_price else float(0)
 
+# Function to estimate duration between two time strings
+def calculate_duration_estimate(departure_time, arrival_time):
+    """Estimate the duration between departure and arrival times.
+    This is a simplified calculation and may not be accurate for all formats.
+    """
+    try:
+        # Try to parse times in common formats
+        dep_formats = ['%H:%M', '%I:%M %p', '%H:%M:%S', '%I:%M:%S %p']
+        arr_formats = ['%H:%M', '%I:%M %p', '%H:%M:%S', '%I:%M:%S %p']
+
+        # Extract time using regex if it's part of a more complex string
+        dep_time_match = re.search(r'(\d{1,2}:\d{2}(?::\d{2})?(?: ?[AP]M)?)', departure_time)
+        arr_time_match = re.search(r'(\d{1,2}:\d{2}(?::\d{2})?(?: ?[AP]M)?)', arrival_time)
+
+        if dep_time_match:
+            dep_time_str = dep_time_match.group(1)
+        else:
+            dep_time_str = departure_time
+
+        if arr_time_match:
+            arr_time_str = arr_time_match.group(1)
+        else:
+            arr_time_str = arrival_time
+
+        # Try different formats
+        dep_dt = None
+        arr_dt = None
+
+        for fmt in dep_formats:
+            try:
+                dep_dt = datetime.strptime(dep_time_str, fmt)
+                break
+            except ValueError:
+                continue
+
+        for fmt in arr_formats:
+            try:
+                arr_dt = datetime.strptime(arr_time_str, fmt)
+                break
+            except ValueError:
+                continue
+
+        if dep_dt and arr_dt:
+            # Handle overnight flights (where arrival is earlier than departure)
+            if arr_dt < dep_dt:
+                arr_dt = arr_dt.replace(day=dep_dt.day + 1)
+
+            # Calculate duration
+            duration = arr_dt - dep_dt
+            hours, remainder = divmod(duration.seconds, 3600)
+            minutes, _ = divmod(remainder, 60)
+
+            if hours > 0 and minutes > 0:
+                return f"{hours}h {minutes}m"
+            elif hours > 0:
+                return f"{hours}h"
+            else:
+                return f"{minutes}m"
+    except Exception as e:
+        # If anything goes wrong, return a generic message
+        return "Duration information not available"
+
 # Display flights
 def display_flights(flights):
     st.header("✈️ Available Flights")
@@ -283,6 +334,18 @@ def display_flights(flights):
                 arr_time = flight.get('arrival_time', '')
                 if arr_date or arr_time:
                     st.markdown(f"**Arrival:** {arr_date}{' at ' if arr_date and arr_time else ''}{arr_time}")
+
+            # Display journey duration
+            if 'duration' in flight and flight['duration']:
+                st.markdown(f"**⏱️ Journey Duration:** {flight['duration']}")
+            # Calculate duration if not provided but we have departure and arrival times
+            elif 'departure_time' in flight and 'arrival_time' in flight and not ('duration' in flight):
+                try:
+                    # This is a simplified calculation and may not be accurate for all formats
+                    # A more robust implementation would parse the times properly
+                    st.markdown(f"**⏱️ Journey Duration:** Approximately {calculate_duration_estimate(flight.get('departure_time', ''), flight.get('arrival_time', ''))}")
+                except:
+                    pass
 
             # Layover information - moved here to display right after arrival information
             if 'layover_details' in flight and flight['layover_details']:
@@ -544,7 +607,7 @@ def display_trains(trains):
     st.header("🚆 Trains")
 
     if not trains or len(trains) == 0:
-        st.warning("No trains available for this route.")
+        st.warning("No trains available for this route. For long-distance or international travel, consider flights instead.")
         return
 
     # Add radio button to filter trains by availability
@@ -611,7 +674,14 @@ def display_trains(trains):
 
                 # Display duration if available
                 if 'duration' in train and train['duration']:
-                    st.write(f"⏳ **Duration:** {train['duration']}")
+                    st.write(f"⏱️ **Journey Duration:** {train['duration']}")
+                # Calculate duration if not provided but we have departure and arrival times
+                elif 'departure_time' in train and 'arrival_time' in train and not ('duration' in train):
+                    try:
+                        # This is a simplified calculation and may not be accurate for all formats
+                        st.write(f"⏱️ **Journey Duration:** Approximately {calculate_duration_estimate(train.get('departure_time', ''), train.get('arrival_time', ''))}")
+                    except:
+                        pass
 
                 # Display stops if available
                 if 'stops' in train and train['stops']:
@@ -653,7 +723,7 @@ def display_buses(buses):
     st.header("🚌 Buses")
 
     if not buses or len(buses) == 0:
-        st.warning("No buses available for this route.")
+        st.warning("No buses available for this route. For long-distance or international travel, consider flights instead.")
         return
 
     # Add radio button to filter buses by availability
@@ -717,7 +787,14 @@ def display_buses(buses):
 
                 # Display duration if available
                 if 'duration' in bus and bus['duration']:
-                    st.write(f"⏳ **Duration:** {bus['duration']}")
+                    st.write(f"⏱️ **Journey Duration:** {bus['duration']}")
+                # Calculate duration if not provided but we have departure and arrival times
+                elif 'departure_time' in bus and 'arrival_time' in bus and not ('duration' in bus):
+                    try:
+                        # This is a simplified calculation and may not be accurate for all formats
+                        st.write(f"⏱️ **Journey Duration:** Approximately {calculate_duration_estimate(bus.get('departure_time', ''), bus.get('arrival_time', ''))}")
+                    except:
+                        pass
 
                 # Display stops if available
                 if 'stops' in bus and bus['stops']:
@@ -1244,21 +1321,26 @@ def main():
 
         with col2:
             people = st.number_input("Number of Travelers", min_value=1, value=2)
-            start_date = st.date_input("Start Date", date(2025, 4, 17))
-            end_date = st.date_input("End Date", date(2025, 4, 21))
+            # Set default dates to current date and one week later
+            today = date.today()
+            one_week_later = today + timedelta(days=7)
+
+            # Format for display: yyyy/mm/dd
+            start_date = st.date_input("Start Date", today, format="YYYY/MM/DD")
+            end_date = st.date_input("End Date", one_week_later, format="YYYY/MM/DD")
             # Calculate number of days from date range
             num_days = (end_date - start_date).days + 1
 
         submit = st.form_submit_button("Generate Itinerary")
 
     if submit:
-        # Display trip information
-        display_trip_info(origin, destination, start_date, end_date, people, trip_type)
-
         # Fetch data from API
         itinerary_data = fetch_itinerary_data(origin, destination, trip_type, num_days, people, start_date, end_date)
 
         if itinerary_data:
+            # Add Trip Information heading
+            st.header("Trip Information")
+
             # Display trip summary with cheapest flight and hotel prices
             display_trip_summary(itinerary_data)
 
