@@ -1,18 +1,35 @@
 import streamlit as st
 import requests
 import json
+import time
 from datetime import date, timedelta, datetime
 import re
 
 # Set page configuration
 st.set_page_config(page_title="🌍 Travel Planner", layout="wide")
-st.title("🧳 AI-Powered Travel Itinerary Planner")
 
-# Function to fetch data from API
+# Function to fetch data from API with caching
+@st.cache_data(ttl=3600, show_spinner=False)  # Cache results for 1 hour
 def fetch_itinerary_data(origin, destination, trip_type, num_days, people, start_date, end_date):
-    try:
-        url = "http://127.0.0.1:8000/plan"
+    """Fetch itinerary data from the API with proper error handling and caching.
 
+    Args:
+        origin: Starting location
+        destination: Travel destination
+        trip_type: Type of trip (business, leisure, etc.)
+        num_days: Duration of trip in days
+        people: Number of travelers
+        start_date: Trip start date
+        end_date: Trip end date
+
+    Returns:
+        Itinerary data dictionary or None if an error occurs
+    """
+    try:
+        # Production would use environment variables for API endpoints
+        url = "http://127.0.0.1:8000/plan"  # In production, use st.secrets or environment variables
+
+        # Prepare request payload
         payload = {
             "current_location": origin,
             "destination": destination,
@@ -23,33 +40,80 @@ def fetch_itinerary_data(origin, destination, trip_type, num_days, people, start
             "end_date": end_date.strftime("%Y/%m/%d")
         }
 
-        # Show a spinner while waiting for the API response
+        # Log the request (in production, use proper logging)
+        st.session_state.setdefault('api_logs', []).append({
+            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'request': payload,
+            'endpoint': url
+        })
+
+        # Show a spinner with progress bar while waiting for the API response
         with st.spinner(f"Planning your {num_days}-day trip to {destination}..."):
-            pass
+            # Set a timeout for the request to prevent hanging
+            response = requests.post(url, json=payload, timeout=60)
 
-        response = requests.post(url, json=payload)
+            # Add response to logs
+            st.session_state['api_logs'][-1]['status_code'] = response.status_code
 
-        if response.status_code == 200:
-            data = response.json()
+            if response.status_code == 200:
+                data = response.json()
 
-            # Check if the expected keys exist
-            if "data" in data and "trip" in data["data"] and "itinerary" in data["data"]["trip"]:
-                return data["data"]["trip"]["itinerary"]
+                # Add successful response to logs
+                st.session_state['api_logs'][-1]['response_size'] = len(str(data))
+
+                # Check if the expected keys exist
+                if "data" in data and "trip" in data["data"] and "itinerary" in data["data"]["trip"]:
+                    return data["data"]["trip"]["itinerary"]
+                else:
+                    # Log the error
+                    st.session_state['api_logs'][-1]['error'] = "Invalid response structure"
+
+                    # Show error in UI with collapsible details
+                    st.error("😕 We couldn't process the travel data correctly.")
+                    with st.expander("Technical Details"):
+                        st.write("API response does not contain the expected data structure.")
+                        st.write("Expected path: data -> trip -> itinerary")
+                        st.write("Actual response structure:")
+                        st.json(data)
+                    return None
             else:
-                st.error("API response does not contain the expected data structure.")
-                st.write("Expected path: data -> trip -> itinerary")
-                st.write("Actual response structure:")
-                st.json(data)
+                # Log the error
+                st.session_state['api_logs'][-1]['error'] = f"HTTP {response.status_code}: {response.text}"
+
+                # Show user-friendly error with technical details in expander
+                st.error(f"😕 We're having trouble planning your trip right now. Please try again later.")
+                with st.expander("Technical Details"):
+                    st.write(f"Error: API returned status code {response.status_code}")
+                    st.code(response.text)
                 return None
-        else:
-            st.error(f"Error: API returned status code {response.status_code}")
-            st.code(response.text)
-            return None
+
+    except requests.exceptions.Timeout:
+        st.error("⏱️ The request timed out. Our travel planning service is taking longer than expected.")
+        st.info("Please try again or plan a simpler trip with fewer days.")
+        return None
+
+    except requests.exceptions.ConnectionError:
+        st.error("🔌 Connection error. We couldn't reach our travel planning service.")
+        st.info("Please check your internet connection and try again.")
+        return None
+
     except Exception as e:
-        st.error(f"Error connecting to API: {str(e)}")
-        st.write(f"Exception details: {type(e).__name__}")
+        # Log the exception
         import traceback
-        st.code(traceback.format_exc())
+        error_details = traceback.format_exc()
+        st.session_state.setdefault('api_logs', []).append({
+            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'request': payload if 'payload' in locals() else "No payload",
+            'error': str(e),
+            'traceback': error_details
+        })
+
+        # Show user-friendly error with technical details in expander
+        st.error("😕 Something went wrong while planning your trip.")
+        with st.expander("Technical Details"):
+            st.write(f"Error connecting to API: {str(e)}")
+            st.write(f"Exception type: {type(e).__name__}")
+            st.code(error_details)
         return None
 
 # Trip information display has been removed
@@ -1307,36 +1371,230 @@ def display_country_culture(culture):
         else:
             st.info("No specific taboos available for this destination.")
 
+# Initialize session state variables
+def init_session_state():
+    """Initialize session state variables for the application."""
+    if 'trip_history' not in st.session_state:
+        st.session_state.trip_history = []
+    if 'loading' not in st.session_state:
+        st.session_state.loading = False
+    if 'current_trip' not in st.session_state:
+        st.session_state.current_trip = None
+    if 'error_count' not in st.session_state:
+        st.session_state.error_count = 0
+    if 'last_successful_trip' not in st.session_state:
+        st.session_state.last_successful_trip = None
+
+# Validate user inputs
+def validate_inputs(origin, destination, start_date, end_date, people):
+    """Validate user inputs and return a list of error messages if any."""
+    errors = []
+
+    # Check for empty fields
+    if not origin or not destination:
+        errors.append("Origin and destination cannot be empty.")
+
+    # Check if origin and destination are the same
+    if origin.lower() == destination.lower():
+        errors.append("Origin and destination cannot be the same.")
+
+    # Check date validity
+    if start_date > end_date:
+        errors.append("Start date cannot be after end date.")
+
+    # Check if trip is too long (more than 30 days)
+    trip_days = (end_date - start_date).days + 1
+    if trip_days > 30:
+        errors.append("Trip duration cannot exceed 30 days. Please adjust your dates.")
+
+    # Check if number of travelers is reasonable
+    if people > 20:
+        errors.append("Number of travelers seems high. Please confirm if you need an itinerary for more than 20 people.")
+
+    return errors
+
 # Main app
 def main():
+    # Initialize session state
+    init_session_state()
+
+    # Hide the sidebar completely
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"] {display: none;}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Main content area
+    st.title("🧳 AI-Powered Travel Itinerary Planner")
+    st.markdown("Plan your perfect trip with our AI assistant. Enter your travel details below to get started.")
+
+    # Add recent trips in a horizontal layout if available
+    if st.session_state.trip_history:
+        st.markdown("<hr style='margin: 15px 0px; border: none; height: 1px; background-color: #e0e0e0;'>", unsafe_allow_html=True)
+        st.markdown("### Recent Trips")
+
+        # Create columns for recent trips
+        cols = st.columns(min(5, len(st.session_state.trip_history)))
+        for i, (col, trip) in enumerate(zip(cols, st.session_state.trip_history[-5:])):
+            with col:
+                if st.button(f"{trip['origin']} → {trip['destination']}", key=f"history_{i}", help=f"Trip from {trip['start_date']} to {trip['end_date']}"):
+                    # Load this trip again
+                    st.session_state.current_trip = trip
+                    st.experimental_rerun()
+        st.markdown("<hr style='margin: 15px 0px; border: none; height: 1px; background-color: #e0e0e0;'>", unsafe_allow_html=True)
+
     # Form to collect trip info
     with st.form("trip_form"):
         st.subheader("Enter Your Trip Details")
 
-        col1, col2 = st.columns(2)
+        # Create three columns for better layout
+        col1, col2, col3 = st.columns([1, 1, 1])
+
         with col1:
-            origin = st.text_input("Current Location", "Hyderabad")
-            destination = st.text_input("Destination", "Paris")
-            trip_type = st.selectbox("Trip Type", ["Leisure", "Adventure", "Romantic", "Business", "Pilgrimage", "Family", "Wellness"])
+            # Use autocomplete for common cities
+            origin = st.text_input("📍 Origin",
+                                  value="Hyderabad",
+                                  help="Your starting location")
+
+            destination = st.text_input("🏁 Destination",
+                                       value="Paris",
+                                       help="Where you want to go")
 
         with col2:
-            people = st.number_input("Number of Travelers", min_value=1, value=2)
             # Set default dates to current date and one week later
             today = date.today()
             one_week_later = today + timedelta(days=7)
 
             # Format for display: yyyy/mm/dd
-            start_date = st.date_input("Start Date", today, format="YYYY/MM/DD")
-            end_date = st.date_input("End Date", one_week_later, format="YYYY/MM/DD")
-            # Calculate number of days from date range
-            num_days = (end_date - start_date).days + 1
+            start_date = st.date_input("🗓️ Start Date",
+                                      today,
+                                      format="YYYY/MM/DD",
+                                      min_value=today,
+                                      help="When your trip begins")
 
-        submit = st.form_submit_button("Generate Itinerary")
+            end_date = st.date_input("🗓️ End Date",
+                                    one_week_later,
+                                    format="YYYY/MM/DD",
+                                    min_value=start_date,
+                                    help="When your trip ends")
 
+        with col3:
+            trip_type = st.selectbox("🧭 Trip Type",
+                                    ["Leisure", "Adventure", "Romantic", "Business", "Pilgrimage", "Family", "Wellness"],
+                                    help="What kind of trip are you planning?")
+
+            people = st.number_input("👥 Number of Travelers",
+                                   min_value=1,
+                                   max_value=20,
+                                   value=2,
+                                   help="How many people are traveling?")
+
+        # Calculate number of days from date range
+        num_days = (end_date - start_date).days + 1
+
+        # Show trip duration
+        st.info(f"Trip Duration: {num_days} days")
+
+        # Add advanced options in an expander
+        with st.expander("Advanced Options", expanded=False):
+            meal_preference = st.multiselect("Meal Preferences",
+                                           ["Vegetarian", "Vegan", "Halal", "Kosher", "Gluten-Free", "Local Cuisine"],
+                                           default=["Local Cuisine"])
+
+            pace = st.select_slider("Trip Pace",
+                                   options=["Relaxed", "Moderate", "Packed"],
+                                   value="Moderate",
+                                   help="How busy do you want your itinerary to be?")
+
+            budget = st.select_slider("Budget",
+                                    options=["Budget", "Mid-range", "Luxury"],
+                                    value="Mid-range",
+                                    help="What's your budget level for this trip?")
+
+        # Submit button with custom styling
+        submit = st.form_submit_button("🚀 Generate Itinerary", use_container_width=True)
+
+    # Validate inputs and show errors if any
     if submit:
-        # Fetch data from API
-        itinerary_data = fetch_itinerary_data(origin, destination, trip_type, num_days, people, start_date, end_date)
+        errors = validate_inputs(origin, destination, start_date, end_date, people)
 
+        if errors:
+            for error in errors:
+                st.error(error)
+        else:
+            # Set loading state
+            st.session_state.loading = True
+
+            # Save current trip to session state
+            current_trip = {
+                "origin": origin,
+                "destination": destination,
+                "start_date": start_date.strftime("%Y/%m/%d"),
+                "end_date": end_date.strftime("%Y/%m/%d"),
+                "trip_type": trip_type,
+                "people": people,
+                "num_days": num_days
+            }
+            st.session_state.current_trip = current_trip
+
+            # Add to trip history if not already there
+            if current_trip not in st.session_state.trip_history:
+                st.session_state.trip_history.append(current_trip)
+                # Keep only the last 10 trips
+                if len(st.session_state.trip_history) > 10:
+                    st.session_state.trip_history = st.session_state.trip_history[-10:]
+
+    # If loading or we have a current trip, fetch and display data
+    if st.session_state.loading or st.session_state.current_trip:
+        # Get trip details from session state if available
+        if st.session_state.current_trip:
+            trip = st.session_state.current_trip
+            origin = trip['origin']
+            destination = trip['destination']
+            trip_type = trip['trip_type']
+            num_days = trip['num_days']
+            people = trip['people']
+            # Convert string dates back to date objects
+            start_date = datetime.strptime(trip['start_date'], "%Y/%m/%d").date()
+            end_date = datetime.strptime(trip['end_date'], "%Y/%m/%d").date()
+
+        # Show a progress bar while loading
+        if st.session_state.loading:
+            progress_bar = st.progress(0)
+            for i in range(100):
+                # Update progress bar
+                progress_bar.progress(i + 1)
+                # Add a small delay for visual effect
+                if i < 70:  # Make the first 70% faster
+                    time.sleep(0.01)
+                else:  # Slow down for the last 30% to simulate waiting for API
+                    time.sleep(0.03)
+            st.session_state.loading = False
+
+        # Fetch data from API with error handling
+        try:
+            with st.spinner(f"Finalizing your {num_days}-day trip to {destination}..."):
+                itinerary_data = fetch_itinerary_data(origin, destination, trip_type, num_days, people, start_date, end_date)
+
+                # Save successful trip
+                if itinerary_data:
+                    st.session_state.last_successful_trip = st.session_state.current_trip
+                    st.session_state.error_count = 0
+                else:
+                    st.session_state.error_count += 1
+                    # If we've had multiple errors, suggest using a cached trip
+                    if st.session_state.error_count >= 3 and st.session_state.last_successful_trip:
+                        st.warning("We're having trouble generating a new itinerary. Would you like to view your last successful trip instead?")
+                        if st.button("View Last Successful Trip"):
+                            st.session_state.current_trip = st.session_state.last_successful_trip
+                            st.experimental_rerun()
+        except Exception as e:
+            st.error(f"An unexpected error occurred: {str(e)}")
+            itinerary_data = None
+            st.session_state.error_count += 1
+
+        # Display the itinerary if we have data
         if itinerary_data:
             # Add Trip Information heading
             st.header("Trip Information")
@@ -1344,8 +1602,17 @@ def main():
             # Display trip summary with cheapest flight and hotel prices
             display_trip_summary(itinerary_data)
 
-            # Create tabs for different sections
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(["Transportation", "Hotels", "Daily Plan", "Events", "News", "Attractions & Food", "Country Culture", "Weather & Transport", "Tips & Emergency"])
+            # Create tabs for different sections with better labels
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+                "🚌 Transportation",
+                "🏠 Hotels",
+                "🗓️ Daily Plan",
+                "🎉 Events",
+                "🌍 Attractions",
+                "🍝 Food & Shopping",
+                "🌡️ Weather",
+                "📍 Tips & Info"
+            ])
 
             with tab1:
                 # Transportation tab with subtabs for flights, trains, and buses
@@ -1372,25 +1639,128 @@ def main():
                 display_events(itinerary_data.get("events", []))
 
             with tab5:
+                display_sightseeing(itinerary_data.get("sightseeing", []))
                 display_news(itinerary_data.get("news", []))
 
             with tab6:
-                display_sightseeing(itinerary_data.get("sightseeing", []))
                 display_food(itinerary_data.get("famous_food", []))
                 display_shopping(itinerary_data.get("local_items_to_buy", []))
 
             with tab7:
-                display_country_culture(itinerary_data.get("country_culture", {}))
-
-            with tab8:
                 display_weather(itinerary_data.get("weather_forecast", {}))
                 display_transport(itinerary_data.get("local_transport", []))
 
-            with tab9:
+            with tab8:
+                # Tips & Info tab
+                display_country_culture(itinerary_data.get("country_culture", {}))
                 display_tips(itinerary_data.get("travel_tips", {}))
                 display_emergency(itinerary_data.get("emergency_contacts", {}))
         else:
             st.error("Failed to fetch itinerary data from API. Please try again later.")
 
+# Add a footer with app information
+def add_footer():
+    """Add a professional footer to the app."""
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("### About")
+        st.markdown("AI-powered travel planner that creates personalized itineraries.")
+
+    with col2:
+        st.markdown("### Features")
+        st.markdown("✅ Flights, hotels, and activities")
+        st.markdown("✅ Daily itineraries")
+        st.markdown("✅ Local transportation")
+
+    with col3:
+        st.markdown("### Contact")
+        st.markdown("📧 support@travelplanner.example.com")
+        st.markdown("🔗 [Documentation](https://example.com)")
+
+    # Copyright and version
+    st.markdown("<div style='text-align: center; color: #888; padding: 10px;'>© 2023 Travel Planner | Version 1.0.0</div>", unsafe_allow_html=True)
+
+# Add custom CSS for better styling
+def add_custom_css():
+    """Add custom CSS to improve the app's appearance."""
+    st.markdown("""
+    <style>
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+    h1, h2, h3 {
+        color: #1E88E5;
+    }
+    .stButton>button {
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 0.5rem 1rem;
+        font-weight: bold;
+    }
+    .stButton>button:hover {
+        background-color: #45a049;
+    }
+    .stProgress > div > div > div > div {
+        background-color: #4CAF50;
+    }
+    /* Main tabs styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        margin-bottom: 15px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 60px;
+        white-space: pre-wrap;
+        background-color: #f0f2f6;
+        border-radius: 8px 8px 0 0;
+        gap: 1px;
+        padding: 10px 16px;
+        font-weight: 500;
+        font-size: 16px;
+        border: none;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background-color: #e0e0e0;
+        cursor: pointer;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #1E88E5 !important;
+        color: white !important;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+
+    /* Subtabs styling (for transportation) */
+    .stTabs .stTabs [data-baseweb="tab-list"] {
+        gap: 4px;
+    }
+    .stTabs .stTabs [data-baseweb="tab"] {
+        height: 40px;
+        background-color: #f8f9fa;
+        border-radius: 4px 4px 0 0;
+        padding: 8px 12px;
+        font-size: 14px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    .stTabs .stTabs [aria-selected="true"] {
+        background-color: #4CAF50 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Main entry point
 if __name__ == "__main__":
+    # Add custom CSS
+    add_custom_css()
+
+    # Run the main app
     main()
+
+    # Add footer
+    add_footer()
