@@ -17,7 +17,7 @@ class State(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 # Using a more capable model for better flight and cost information
-model = ChatGroq(model="meta-llama/llama-4-maverick-17b-128e-instruct")
+model = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct")
 
 def create_langgraph_agent():
     @tool
